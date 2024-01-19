@@ -43,6 +43,12 @@ func New(expiresAfter time.Duration) Cache {
 func (c *cache) Set(id string, data interface{}) {
 	c.mu.Lock()
 
+	c.set(id, data)
+
+	c.mu.Unlock()
+}
+
+func (c* cache) set(id string, data interface{}) {
 	var expiresAt time.Time
 	if c.expiresAfter == NeverExpires {
 		// I assume that the server will not function non stop for 99 years but if the requirements are different this could be
@@ -56,25 +62,21 @@ func (c *cache) Set(id string, data interface{}) {
 		data:      data,
 		expiresAt: expiresAt,
 	}
-
-	c.mu.Unlock()
 }
 
 func (c *cache) Get(id string, databaseRequest DataRequest) (interface{}, bool) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	item, found := c.items[id]
 
 	if expired := item.expired(); !found || expired {
 		data := databaseRequest(id)
-		c.mu.Unlock()
 
-		c.Set(id, data)
+		c.set(id, data)
 
 		return data, false
 	}
-
-	c.mu.Unlock()
 
 	return item.data, true
 }

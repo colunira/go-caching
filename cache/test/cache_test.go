@@ -1,6 +1,7 @@
 package cache_test
 
 import (
+	"fmt"
 	"gosession/caching/cache"
 	"gosession/caching/cache/test/mocks"
 	"sync"
@@ -190,4 +191,62 @@ func TestMultiAccessCachingExpiration(t *testing.T) {
 		}
 	})
 
+}
+
+func TestManyConcurrentRequests(t *testing.T) {
+	users := map[string]interface{}{}
+
+	usersCount := 100
+	requestsCount := 1000
+	opTime := 5 * time.Millisecond
+
+	for i := 0; i < usersCount; i++ {
+		id := fmt.Sprintf("%d", i)
+		users[id] = id
+	}
+
+	d := mocks.Database{
+		Data:          users,
+		OperationTime: opTime,
+	}
+
+	expiresAfter := time.Minute
+	c := cache.New(expiresAfter)
+
+	requestDistribution := make([]string, 0)
+	for i := 0; i < requestsCount; i++ {
+		id := fmt.Sprintf("%d", i%usersCount)
+		requestDistribution = append(requestDistribution, id)
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(requestsCount)
+
+	dbCalls := sync.Map{}
+
+	for _, id := range requestDistribution {
+		go func(id string) {
+			if _, ok := dbCalls.Load(id); !ok {
+				dbCalls.Store(id, 0)
+			}
+
+			_, found := c.Get(id, d.GetById)
+
+			if !found {
+				v, _ := dbCalls.Load(id)
+				dbCalls.Store(id, v.(int)+1)
+			}
+
+			wg.Done()
+		}(id)
+	}
+
+	wg.Wait()
+
+	dbCalls.Range(func(key, value interface{}) bool {
+		if value.(int) > 1 {
+			t.Fatalf("Expected at most one database call per user, got %v, user=%s", value, key)
+		}
+		return true
+	})
 }
